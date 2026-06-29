@@ -77,6 +77,24 @@ target_link_libraries(your_target PRIVATE traceback::traceback)
 Requires C++20 (for `std::source_location` and `std::format`). Build it
 `-fno-omit-frame-pointer` for reliable frames in optimized builds.
 
+## Examples
+
+[`examples/demo.cc`](examples/demo.cc) is a runnable tour. A top-level CMake build
+produces it next to the test:
+
+```sh
+cmake -B build && cmake --build build && ./build/traceback_demo
+```
+
+It walks a few nested, non-inlined calls (`outer` -> `middle` -> `inner`) and
+prints the `format()` box for that live stack, most recent call first, with a
+`source_location` header; the same `format()` with a plain header string; the raw
+layer underneath (`capture()` return addresses paired with `describe()` of each,
+plus a bogus address that comes back as `[unknown symbol]`); and the macOS `atos`
+opt-in (`enable_atos(true)`), which enriches frames with `file:line` where it can
+and is a no-op off macOS. Symbolization is best-effort: depending on the build,
+some frames may resolve only to `symbol + offset`, and that is what the demo shows.
+
 ## License
 
 MIT. Extracted from Xapiand (c) Dubalu LLC; modernized (c) Germán Méndez Bravo.

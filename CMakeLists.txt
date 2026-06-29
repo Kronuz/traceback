@@ -48,4 +48,8 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 	add_executable(traceback_test test/test.cc)
 	target_link_libraries(traceback_test PRIVATE traceback)
 	add_test(NAME traceback COMMAND traceback_test)
+
+	# A runnable tour of the library (not a test): build & run ./build/traceback_demo
+	add_executable(traceback_demo examples/demo.cc)
+	target_link_libraries(traceback_demo PRIVATE traceback)
 endif()
