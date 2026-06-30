@@ -27,16 +27,20 @@
  * owns the option as the CMake cache variable TRACEBACK_HOOKS (default OFF);
  * CMake emits the macro definition below only when it is ON.
  *
- * When TRACEBACK_HOOKS is defined, the heavy interposition path compiles in: a
- * __cxa_throw override that records the throw-site callstack, and global
- * malloc/calloc/realloc/free overrides that reserve a slot for it. With it OFF
- * (the default) the all-thread signal snapshot and the per-thread formatter
- * still work; only the throw-site capture is absent.
+ * When TRACEBACK_HOOKS is defined, the whole crash dumper compiles in: the
+ * fixed, multi-megabyte, lock-free thread registry, the SIGUSR2 stack-walk
+ * handler, the all-thread dump_callstacks()/snapshot(), and the __cxa_throw +
+ * malloc/calloc/realloc/free interposition that records throw-site callstacks.
+ * With it OFF (the default) NONE of that is built: the library is just the
+ * lightweight formatting box (capture/describe/format) plus backtrace().
+ *
+ * TRACEBACK_MAX_THREADS sizes the registry array, TRACEBACK_MAX_FRAMES sizes
+ * each slot's per-thread callstack; both only matter under TRACEBACK_HOOKS.
  *
  * A FetchContent consumer that populates the sources without running this
  * library's CMake will not get this file; traceback.cc guards its inclusion on
- * __has_include, so such a consumer can instead -DTRACEBACK_HOOKS on its own
- * compile line.
+ * __has_include, so such a consumer can instead -D these on its own compile
+ * line.
  *
  * Do not edit by hand. Edit traceback_config.h.in and re-run CMake.
  */
@@ -44,3 +48,6 @@
 #pragma once
 
 #cmakedefine TRACEBACK_HOOKS 1
+
+#cmakedefine TRACEBACK_MAX_THREADS @TRACEBACK_MAX_THREADS@
+#cmakedefine TRACEBACK_MAX_FRAMES @TRACEBACK_MAX_FRAMES@

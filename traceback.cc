@@ -74,8 +74,12 @@ namespace {
 constexpr std::size_t MAX_FRAMES = 256;
 
 // The dumper's registry stores fixed-size per-thread callstacks; this caps how
-// many frames each slot holds. Matches Xapiand's `max_frames`.
-constexpr std::size_t MAX_DUMP_FRAMES = 128;
+// many frames each slot holds (Xapiand's `max_frames`). A consumer can override
+// it via -DTRACEBACK_MAX_FRAMES or the generated traceback_config.h.
+#if !defined(TRACEBACK_MAX_FRAMES)
+#  define TRACEBACK_MAX_FRAMES 128
+#endif
+constexpr std::size_t MAX_DUMP_FRAMES = TRACEBACK_MAX_FRAMES;
 
 }  // namespace
 
@@ -282,10 +286,6 @@ format(const std::source_location& loc, std::size_t skip, std::size_t max)
 
 namespace {
 
-std::atomic_size_t pthreads_req;
-std::atomic_size_t pthreads_cnt;
-
-
 // A captured callstack stored as a malloc'd void** block: slot 0 holds a
 // one-past-the-end sentinel (so size() is end - base), slots 1..N hold the
 // return addresses. backtrace() and the __cxa_throw hook both produce this shape.
@@ -358,18 +358,66 @@ public:
 };
 
 
+}  // namespace
+
+
+#if defined(TRACEBACK_HOOKS)
+
+// ==========================================================================
+// The whole-process crash dumper's thread registry (TRACEBACK_HOOKS only).
+//
+// This is the heavy part. Each slot holds two MAX_DUMP_FRAMES-wide atomic
+// arrays (callstack + snapshot), so the whole fixed array is multi-megabyte and
+// is ONLY compiled in when the dumper is opted into. The default build (hooks
+// off) is just the lightweight formatting box: no registry, no signal handler,
+// no __cxa_throw override.
+//
+// The array is fixed and lock-free on purpose: the SIGUSR2 handler runs in
+// interrupt context, so it must be async-signal-safe. It only ever *reads*
+// slots and writes into the slot of the thread it interrupted. It cannot
+// allocate or lock, which rules out a std::vector or a mutex-guarded map. Slot
+// reclamation is done by the owning thread on exit (deregister_thread), which
+// only clears its slot's atomics (never frees memory), so the handler's read
+// side stays safe.
+// ==========================================================================
+
+namespace {
+
+// How many threads the registry can track at once. A consumer can override it
+// via -DTRACEBACK_MAX_THREADS or the generated traceback_config.h. It is a hard
+// cap because the array is fixed-size (see above); registrations beyond it are
+// dropped. Freed slots (deregister_thread / thread_registration teardown) are
+// reused before the high-water mark is extended, so a long-running process with
+// thread churn does not leak slots.
+#if !defined(TRACEBACK_MAX_THREADS)
+#  define TRACEBACK_MAX_THREADS 1024
+#endif
+constexpr std::size_t max_threads = TRACEBACK_MAX_THREADS;
+
+// Likewise surfaced as a named constant (it already was MAX_DUMP_FRAMES above).
+constexpr std::size_t max_frames = MAX_DUMP_FRAMES;
+
+std::atomic_size_t pthreads_req;
+
+// High-water mark: the number of slots ever handed out. The handler and the
+// dumpers iterate [0, pthreads_cnt); freed slots inside that range have a zero
+// pthread and are skipped. It only grows; reclamation reuses slots below it.
+std::atomic_size_t pthreads_cnt;
+
+
 // One registry slot. The signal handler writes callstack/callstack_frames from
 // interrupt context (lock-free atomics); callstacks_snapshot() maintains the
-// baseline snapshot/snapshot_frames; req acknowledges a broadcast round.
+// baseline snapshot/snapshot_frames; req acknowledges a broadcast round. A zero
+// `pthread` marks a free (never-used or reclaimed) slot.
 struct ThreadInfo {
 	const char* name;
 	std::atomic<pthread_t> pthread;
 
 	std::atomic_size_t callstack_frames;
-	std::array<std::atomic<void*>, MAX_DUMP_FRAMES> callstack;
+	std::array<std::atomic<void*>, max_frames> callstack;
 
 	std::atomic_size_t snapshot_frames;
-	std::array<std::atomic<void*>, MAX_DUMP_FRAMES> snapshot;
+	std::array<std::atomic<void*>, max_frames> snapshot;
 
 	std::atomic_int errnum;
 
@@ -377,9 +425,11 @@ struct ThreadInfo {
 };
 
 
-std::array<ThreadInfo, 1000> pthreads;
+std::array<ThreadInfo, max_threads> pthreads;
 
 }  // namespace
+
+#endif  // TRACEBACK_HOOKS
 
 
 void**
@@ -594,6 +644,14 @@ void __cxa_throw(void* thrown_object, __cxa_throw_type_info_t* tinfo, void (*des
 ////////////////////////////////////////////////////////////////////////////////
 
 
+#if defined(TRACEBACK_HOOKS)
+
+// The signal handler, the all-thread dump/snapshot, and the registry entry
+// points (register_thread / deregister_thread / thread_registration) all depend
+// on the pthreads registry above, so they live under the same gate. The default
+// build (hooks off) does not compile any of this; see traceback.h, where the
+// matching declarations are guarded too.
+
 void
 collect_callstack_sig_handler(int /*signum*/, siginfo_t* /*info*/, void* ptr)
 {
@@ -690,16 +748,23 @@ dump_callstacks()
 		}
 	}
 
-	// try waiting for callstacks
+	// try waiting for callstacks. Count only live slots (nonzero pthread): a
+	// reclaimed slot never acks, so waiting on the high-water mark would always
+	// spin out.
 	for (int w = 10; w >= 0; --w) {
 		std::size_t ok = 0;
+		std::size_t live = 0;
 		for (std::size_t idx = 0; idx < pthreads.size() && idx < pthreads_cnt.load(std::memory_order_acquire); ++idx) {
 			auto& thread_info = pthreads[idx];
+			if (thread_info.pthread.load(std::memory_order_relaxed) == 0) {
+				continue;
+			}
+			++live;
 			if (thread_info.req.load() >= req) {
 				++ok;
 			}
 		}
-		if (ok == pthreads_cnt.load(std::memory_order_acquire)) {
+		if (ok == live) {
 			break;
 		}
 		sched_yield();
@@ -719,6 +784,10 @@ dump_callstacks()
 		auto& thread_info = pthreads[idx];
 		auto pthread = thread_info.pthread.load(std::memory_order_relaxed);
 		if (pthread) {
+			// A slot just claimed by a reclaiming register_thread() may briefly
+			// have a live pthread before its name is written; fall back so the
+			// format() calls never dereference a null name.
+			const char* name = thread_info.name ? thread_info.name : "?";
 			auto errnum = thread_info.errnum.load(std::memory_order_acquire);
 
 			auto snapshot_frames = thread_info.snapshot_frames.load(std::memory_order_acquire);
@@ -737,14 +806,14 @@ dump_callstacks()
 
 			if (!snapshot_frames || !callstack_frames) {
 				++active;
-				ret.append(strings::format("        " + STEEL_BLUE + "<Thread {}: {}{}{}>\n", idx, thread_info.name, !snapshot_frames ? " " + DARK_STEEL_BLUE + "(no snapshot)" + STEEL_BLUE : " " + DARK_STEEL_BLUE + "(no callstack)" + STEEL_BLUE, errnum ? " " + RED + "(" + error::name(errnum) + ")" + STEEL_BLUE : ""));
+				ret.append(strings::format("        " + STEEL_BLUE + "<Thread {}: {}{}{}>\n", idx, name, !snapshot_frames ? " " + DARK_STEEL_BLUE + "(no snapshot)" + STEEL_BLUE : " " + DARK_STEEL_BLUE + "(no callstack)" + STEEL_BLUE, errnum ? " " + RED + "(" + error::name(errnum) + ")" + STEEL_BLUE : ""));
 				if (callstack_frames) {
-					ret.append(strings::format(DEBUG_COL + "{}\n", strings::indent(traceback(thread_info.name, "", static_cast<int>(idx), callstack, static_cast<int>(skip_call)), ' ', 8, true)));
+					ret.append(strings::format(DEBUG_COL + "{}\n", strings::indent(traceback(name, "", static_cast<int>(idx), callstack, static_cast<int>(skip_call)), ' ', 8, true)));
 				}
 			} else if (callstack[1 + skip_call] != snapshot[1 + skip_snap]) {
 				++active;
-				ret.append(strings::format("        " + STEEL_BLUE + "<Thread {}: {}{}{}>\n", idx, thread_info.name, callstack[1 + skip_call] == snapshot[1 + skip_snap] ? " " + DARK_STEEL_BLUE + "(idle)" + STEEL_BLUE : " " + DARK_ORANGE + "(active)" + STEEL_BLUE, errnum ? " " + RED + "(" + error::name(errnum) + ")" + STEEL_BLUE : ""));
-				ret.append(strings::format(DEBUG_COL + "{}\n", strings::indent(traceback(thread_info.name, "", static_cast<int>(idx), callstack, static_cast<int>(skip_call)), ' ', 8, true)));
+				ret.append(strings::format("        " + STEEL_BLUE + "<Thread {}: {}{}{}>\n", idx, name, callstack[1 + skip_call] == snapshot[1 + skip_snap] ? " " + DARK_STEEL_BLUE + "(idle)" + STEEL_BLUE : " " + DARK_ORANGE + "(active)" + STEEL_BLUE, errnum ? " " + RED + "(" + error::name(errnum) + ")" + STEEL_BLUE : ""));
+				ret.append(strings::format(DEBUG_COL + "{}\n", strings::indent(traceback(name, "", static_cast<int>(idx), callstack, static_cast<int>(skip_call)), ' ', 8, true)));
 			}
 		}
 		skip_call = 0;
@@ -779,16 +848,23 @@ callstacks_snapshot()
 				}
 			}
 
-			// try waiting for callstacks
+			// try waiting for callstacks. Count only live slots (nonzero pthread):
+			// reclaimed slots never ack, so comparing against the high-water mark
+			// would never settle.
 			for (int w = 10; w >= 0; --w) {
 				std::size_t ok = 0;
+				std::size_t live = 0;
 				for (std::size_t idx = 0; idx < pthreads.size() && idx < pthreads_cnt.load(); ++idx) {
 					auto& thread_info = pthreads[idx];
+					if (thread_info.pthread.load(std::memory_order_relaxed) == 0) {
+						continue;
+					}
+					++live;
 					if (thread_info.req.load() >= req) {
 						++ok;
 					}
 				}
-				if (ok == pthreads_cnt.load()) {
+				if (ok == live) {
 					break;
 				}
 				sched_yield();
@@ -818,9 +894,10 @@ callstacks_snapshot()
 						}
 						thread_info.snapshot_frames.store(callstack_frames, std::memory_order_release);
 					}
-				} else {
-					retry = true;
 				}
+				// else: a freed/reclaimed slot (zero pthread) below the high-water
+				// mark. It is a permanent hole now that deregister_thread() frees
+				// slots, so skip it rather than retrying forever.
 			}
 
 			sched_yield();
@@ -845,11 +922,81 @@ callstacks_snapshot()
 void
 register_thread(pthread_t pthread, const char* name)
 {
+	// Prefer reclaiming a freed slot (one whose owner deregistered) before
+	// extending the high-water mark, so thread churn does not leak slots. A
+	// freed slot has a zero pthread; claim it with a CAS so two concurrent
+	// registrations cannot grab the same one, and only the winner fills the
+	// slot. Claiming first (then writing name/counts) means each slot's fields
+	// are written by exactly its owner, never raced between two registrants. The
+	// handler/dumpers only read slots and tolerate a not-yet-named slot, so
+	// flipping a slot from 0 to a live pthread is safe against them.
+	std::size_t high = pthreads_cnt.load(std::memory_order_acquire);
+	for (std::size_t idx = 0; idx < high && idx < pthreads.size(); ++idx) {
+		auto& thread_info = pthreads[idx];
+		if (thread_info.pthread.load(std::memory_order_relaxed) != 0) {
+			continue;
+		}
+		pthread_t expected = 0;
+		if (thread_info.pthread.compare_exchange_strong(expected, pthread,
+				std::memory_order_acq_rel, std::memory_order_relaxed)) {
+			thread_info.callstack_frames.store(0, std::memory_order_release);
+			thread_info.snapshot_frames.store(0, std::memory_order_release);
+			thread_info.errnum.store(0, std::memory_order_release);
+			thread_info.name = name;
+			return;
+		}
+	}
+
+	// No free slot below the high-water mark: extend it. Here we can write
+	// name/counts before publishing the pthread (no other thread can target this
+	// slot yet), so a reader never sees it live without a name. Registrations
+	// past the fixed cap are silently dropped (Xapiand's behavior).
 	auto idx = pthreads_cnt.fetch_add(1);
 	if (idx < pthreads.size()) {
-		pthreads[idx].name = name;
-		pthreads[idx].pthread.store(pthread, std::memory_order_release);
+		auto& thread_info = pthreads[idx];
+		thread_info.name = name;
+		thread_info.callstack_frames.store(0, std::memory_order_release);
+		thread_info.snapshot_frames.store(0, std::memory_order_release);
+		thread_info.errnum.store(0, std::memory_order_release);
+		thread_info.pthread.store(pthread, std::memory_order_release);
 	}
 }
+
+
+void
+deregister_thread()
+{
+	// Release the calling thread's slot so it can be reused. We only clear the
+	// slot's atomics, never free memory or shrink pthreads_cnt, so the signal
+	// handler's read side stays async-signal-safe. Clearing the frame counts
+	// first (release) and the pthread last makes the slot look empty to a
+	// concurrent dump before it is offered back to register_thread.
+	auto self = pthread_self();
+	std::size_t high = pthreads_cnt.load(std::memory_order_acquire);
+	for (std::size_t idx = 0; idx < high && idx < pthreads.size(); ++idx) {
+		auto& thread_info = pthreads[idx];
+		if (thread_info.pthread.load(std::memory_order_relaxed) == self) {
+			thread_info.callstack_frames.store(0, std::memory_order_release);
+			thread_info.snapshot_frames.store(0, std::memory_order_release);
+			thread_info.errnum.store(0, std::memory_order_release);
+			thread_info.name = nullptr;
+			thread_info.pthread.store(0, std::memory_order_release);
+			return;
+		}
+	}
+}
+
+
+thread_registration::thread_registration(const char* name)
+{
+	register_thread(pthread_self(), name);
+}
+
+thread_registration::~thread_registration()
+{
+	deregister_thread();
+}
+
+#endif  // TRACEBACK_HOOKS
 
 }  // namespace traceback

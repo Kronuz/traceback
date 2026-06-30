@@ -46,11 +46,22 @@
 
 #pragma once
 
-// The library owns its one build option: TRACEBACK_HOOKS gates the heavy
-// __cxa_throw + malloc/free interposition that records throw-site callstacks.
+// The library owns its build options. TRACEBACK_HOOKS gates the whole heavy
+// crash dumper: the fixed, multi-megabyte, lock-free thread registry, the
+// SIGUSR2 stack-walk handler, the all-thread dump_callstacks()/snapshot(), and
+// the __cxa_throw + malloc/free interposition that records throw-site
+// callstacks. The DEFAULT build (hooks off) is just the lightweight formatting
+// box (capture/describe/format/enable_atos) plus backtrace()/traceback(); no
+// static array, no signal handler, no allocator override is compiled in. A
+// consumer that wants the dumper builds with -DTRACEBACK_HOOKS=ON.
+//
+// TRACEBACK_MAX_THREADS (default 1024) sizes the registry array, and
+// TRACEBACK_MAX_FRAMES (default 128) sizes each slot's per-thread callstack;
+// both only matter under TRACEBACK_HOOKS and are overridable.
+//
 // CMake generates traceback_config.h via configure_file from the CMake cache
-// variable; a FetchContent-populate consumer that never runs this CMake can
-// instead -DTRACEBACK_HOOKS on its compile line, so the include is optional.
+// variables; a FetchContent-populate consumer that never runs this CMake can
+// instead -D these on its compile line, so the include is optional.
 #if defined(__has_include)
 #  if __has_include("traceback_config.h")
 #    include "traceback_config.h"   // for TRACEBACK_HOOKS (generated)
@@ -105,14 +116,58 @@ bool atos_enabled() noexcept;
 // capture()/format() instead.
 void** backtrace();
 
+// The thread registry, the SIGUSR2 handler, and the all-thread dump are the
+// heavy part of the dumper: the registry is a fixed, lock-free, multi-megabyte
+// static array (so the handler can read it without allocating or locking), and
+// it is only compiled when the library is built with TRACEBACK_HOOKS. The
+// declarations below therefore exist only under that macro; a consumer that
+// wants the dumper builds with -DTRACEBACK_HOOKS=ON (CMake option) or
+// -DTRACEBACK_HOOKS on the compile line. The formatting box above, plus
+// backtrace()/traceback() below, are always available.
+#if defined(TRACEBACK_HOOKS)
+
+// How many threads the registry can hold (the fixed array's size) and how many
+// frames each slot stores. Overridable via -DTRACEBACK_MAX_THREADS /
+// -DTRACEBACK_MAX_FRAMES or the generated traceback_config.h.
+#if !defined(TRACEBACK_MAX_THREADS)
+#  define TRACEBACK_MAX_THREADS 1024
+#endif
+#if !defined(TRACEBACK_MAX_FRAMES)
+#  define TRACEBACK_MAX_FRAMES 128
+#endif
+
 // Register the calling (or any) thread in the dumper's fixed-size registry under
 // a human-readable `name`. A registered thread is one that dump_callstacks() and
 // callstacks_snapshot() will signal and render. The host calls this once per
 // thread it wants to appear in a dump (typically right after the thread starts),
 // passing pthread_self(). Names are stored by pointer, not copied, so pass a
 // pointer with static/long-enough lifetime (e.g. a string literal). The registry
-// holds up to 1000 threads; registrations beyond that are silently dropped.
+// holds up to TRACEBACK_MAX_THREADS threads; registrations beyond that are
+// silently dropped. Slots freed by deregister_thread() are reused first, so a
+// process with thread churn does not leak slots up to the cap.
 void register_thread(pthread_t pthread, const char* name);
+
+// Release the *calling* thread's registry slot so it can be reused by a later
+// register_thread(). Call it from a thread that is about to exit (or use the
+// RAII thread_registration helper, which does this for you). It only clears the
+// slot's atomics, so it is safe to call concurrently with a dump.
+void deregister_thread();
+
+// RAII wrapper: register the calling thread on construction, deregister it on
+// destruction. Declare one at the top of each thread function so registration
+// tracks the thread's lifetime:
+//
+//   void* worker(void*) {
+//     traceback::thread_registration reg("worker");
+//     ...
+//   }
+class thread_registration {
+public:
+	explicit thread_registration(const char* name);
+	~thread_registration();
+	thread_registration(const thread_registration&) = delete;
+	thread_registration& operator=(const thread_registration&) = delete;
+};
 
 // SIGUSR2 handler that walks the interrupted thread's stack in place and stores
 // it into that thread's registry slot. The host installs this on SIGUSR2 with
@@ -137,6 +192,8 @@ std::string dump_callstacks();
 // dump_callstacks() to tell idle threads (unchanged since the snapshot) from
 // active ones. Call once the process has settled, before the first dump.
 void callstacks_snapshot();
+
+#endif  // TRACEBACK_HOOKS
 
 // Recover the throw-site callstack stashed for an in-flight exception by the
 // __cxa_throw hook. Only meaningful when the library was built with

@@ -18,16 +18,26 @@ if(NOT CMAKE_BUILD_TYPE)
 	set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# --- Build option: throw-site interposition ---
+# --- Build option: the crash dumper ---
 # traceback.cc used Xapiand's project-wide "config.h" for one thing: the
-# XAPIAND_TRACEBACKS gate around the __cxa_throw + malloc/free overrides that
-# record throw-site callstacks. Standalone, the library owns the option itself,
-# the way the times/allocators siblings own their feature macros. TRACEBACK_HOOKS
-# (default OFF, it is an allocator-interposition landmine) is #cmakedefine'd into
-# a generated traceback_config.h that traceback.h includes (guarded by
-# __has_include, so a FetchContent-populate consumer that skips this CMake can
-# -DTRACEBACK_HOOKS itself).
-option(TRACEBACK_HOOKS "Interpose __cxa_throw + malloc/free to record throw-site callstacks (heavy; off by default)" OFF)
+# XAPIAND_TRACEBACKS gate. Standalone, the library owns the option itself, the
+# way the times/allocators siblings own their feature macros. TRACEBACK_HOOKS
+# (default OFF) now gates the WHOLE heavy crash dumper: the fixed multi-megabyte
+# lock-free thread registry, the SIGUSR2 stack-walk handler, the all-thread
+# dump_callstacks()/snapshot(), and the __cxa_throw + malloc/free interposition
+# (an allocator-interposition landmine). The default build is just the
+# lightweight formatting box, so it carries no static registry and no signal
+# handler. The option is #cmakedefine'd into a generated traceback_config.h that
+# traceback.h includes (guarded by __has_include, so a FetchContent-populate
+# consumer that skips this CMake can -DTRACEBACK_HOOKS itself).
+option(TRACEBACK_HOOKS "Build the whole-process crash dumper: thread registry + SIGUSR2 handler + all-thread dump + __cxa_throw/malloc interposition (heavy; off by default)" OFF)
+
+# Registry sizing (only relevant under TRACEBACK_HOOKS). TRACEBACK_MAX_THREADS is
+# the fixed registry array's size; TRACEBACK_MAX_FRAMES is each slot's per-thread
+# callstack depth. Both are #cmakedefine'd into the generated config so a
+# consumer can tune the registry's footprint without touching the source.
+set(TRACEBACK_MAX_THREADS 1024 CACHE STRING "Max threads the crash-dumper registry can track (fixed array size; TRACEBACK_HOOKS only)")
+set(TRACEBACK_MAX_FRAMES 128 CACHE STRING "Max frames stored per thread in the crash-dumper registry (TRACEBACK_HOOKS only)")
 configure_file(
 	"${CMAKE_CURRENT_SOURCE_DIR}/traceback_config.h.in"
 	"${CMAKE_CURRENT_BINARY_DIR}/traceback_config.h"
