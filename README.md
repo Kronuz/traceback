@@ -1,11 +1,14 @@
 # traceback
 
-A small, modern C++ stack-trace box, extracted and modernized from
+A small, modern C++ crash-traceback toolkit, extracted and modernized from
 [Xapiand](https://github.com/Kronuz/Xapiand).
 
 It captures the current call stack and symbolizes it into a readable traceback:
 demangled `symbol + offset` everywhere (via `dladdr` + `abi::__cxa_demangle`),
-and `file:line` on macOS when you opt into `atos`.
+and `file:line` on macOS when you opt into `atos`. On top of that formatting box
+it carries the original whole-process crash dumper: a registry of named threads,
+a SIGUSR2 stack-walk handler, and `dump_callstacks()` / `callstacks_snapshot()`
+that signal every registered thread and render all their stacks at once.
 
 ```cpp
 #include "traceback.h"
@@ -21,6 +24,8 @@ std::string tb2 = traceback::format(std::source_location::current());  // with a
 
 ## API
 
+The formatting box:
+
 ```cpp
 namespace traceback {
     std::vector<void*> capture(size_t skip = 1, size_t max = 128);
@@ -35,20 +40,55 @@ namespace traceback {
 `describe`/`format` never throw and always return something (`[unknown symbol]`
 for frames that don't resolve), so they are safe to call from error paths.
 
-## What it deliberately leaves out
+The whole-process crash dumper:
 
-This is the reusable core. Two things from the original Xapiand `traceback.cc`
-are intentionally **not** here, because they don't belong in a general library:
+```cpp
+namespace traceback {
+    void**      backtrace();                         // raw void** callstack (caller frees)
+    void        register_thread(pthread_t, const char* name);
+    void        collect_callstack_sig_handler(int, siginfo_t*, void* ptr);  // install on SIGUSR2
+    std::string dump_callstacks();                   // broadcast + render all threads
+    void        callstacks_snapshot();               // baseline so idle vs active can be told
+    void**      exception_callstack(std::exception_ptr&);   // throw-site stack (needs TRACEBACK_HOOKS)
+    std::string traceback(const char* fn, const char* file, int line, void** cs, int skip = 1);
+    std::string traceback(const char* fn, const char* file, int line, int skip = 1);
+}
+// TRACEBACK() formats the current stack with a call-site header;
+// BACKTRACE() yields a raw void** only when TRACEBACK_HOOKS is on, else nullptr.
+```
 
-- **Throw-site stack capture** (`exception_callstack`), which relied on
-  interposing `__cxa_throw` and overriding global `malloc`/`free`. That is an
-  allocator-interposition landmine: it fights tcmalloc/jemalloc and sanitizers
-  and depends on ABI internals. If you want a throw-site stack, capture one in a
-  custom exception's constructor instead. `format()` gives the catch-site stack,
-  which is what you usually want anyway.
-- **The signal-time, all-thread crash dumper** + thread registry. That is
-  crash-diagnostics infrastructure, a separate concern from "format a backtrace,"
-  and the only part that needed an atomic shared pointer.
+### Using the dumper
+
+The dumper needs a little host glue: install the signal handler, register the
+threads you want to appear, take a baseline, then dump.
+
+```cpp
+struct sigaction sa{};
+sa.sa_flags = SA_SIGINFO | SA_RESTART;
+sa.sa_sigaction = traceback::collect_callstack_sig_handler;
+sigaction(SIGUSR2, &sa, nullptr);                  // the dumper broadcasts SIGUSR2
+
+traceback::register_thread(pthread_self(), "main");  // once per thread, after it starts
+// ... worker threads call register_thread(pthread_self(), "...") too ...
+
+traceback::callstacks_snapshot();                  // once the process has settled
+std::string report = traceback::dump_callstacks(); // from a crash/debug path
+```
+
+The registry holds up to 1000 threads; names are stored by pointer (pass a
+literal or otherwise long-lived string). `dump_callstacks()` tells idle threads
+(unchanged since the snapshot) from active ones and colorizes the report.
+
+### Throw-site capture (`TRACEBACK_HOOKS`, opt-in)
+
+`exception_callstack()` recovers the stack from where an exception was *thrown*,
+but that needs the `__cxa_throw` + global `malloc`/`free` interposition, which is
+off by default. Turn it on with the CMake option `-DTRACEBACK_HOOKS=ON` (or
+`-DTRACEBACK_HOOKS` on the compile line for a FetchContent-populate consumer).
+It is an allocator-interposition landmine: it fights tcmalloc/jemalloc and
+sanitizers and leans on libc++/libsupc++ ABI internals, which is why it is
+opt-in. With it off, the all-thread snapshot and the per-thread formatter still
+work; only `exception_callstack()` goes dark.
 
 ## Forward compatibility with `std::stacktrace`
 
@@ -75,7 +115,15 @@ target_link_libraries(your_target PRIVATE traceback::traceback)
 ```
 
 Requires C++20 (for `std::source_location` and `std::format`). Build it
-`-fno-omit-frame-pointer` for reliable frames in optimized builds.
+`-fno-omit-frame-pointer` for reliable frames in optimized builds (the signal
+handler's in-place stack walk depends on a valid frame-pointer chain).
+
+The dumper's colored, per-thread output pulls four Kronuz siblings via
+`FetchContent` (tracked at tip): [`strings`](https://github.com/Kronuz/strings)
+(`strings::format`/`indent`), [`errno-names`](https://github.com/Kronuz/errno-names)
+(`error::name`), [`term-color`](https://github.com/Kronuz/term-color) (the color
+palette), and [`nanosleep`](https://github.com/Kronuz/nanosleep). `likely.h` is
+vendored in-repo.
 
 ## Examples
 
