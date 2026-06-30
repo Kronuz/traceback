@@ -18,19 +18,30 @@ if(NOT CMAKE_BUILD_TYPE)
 	set(CMAKE_BUILD_TYPE Release)
 endif()
 
-# --- Build option: the crash dumper ---
+# --- Build options: two independent opt-ins ---
 # traceback.cc used Xapiand's project-wide "config.h" for one thing: the
-# XAPIAND_TRACEBACKS gate. Standalone, the library owns the option itself, the
-# way the times/allocators siblings own their feature macros. TRACEBACK_HOOKS
-# (default OFF) now gates the WHOLE heavy crash dumper: the fixed multi-megabyte
-# lock-free thread registry, the SIGUSR2 stack-walk handler, the all-thread
-# dump_callstacks()/snapshot(), and the __cxa_throw + malloc/free interposition
-# (an allocator-interposition landmine). The default build is just the
-# lightweight formatting box, so it carries no static registry and no signal
-# handler. The option is #cmakedefine'd into a generated traceback_config.h that
-# traceback.h includes (guarded by __has_include, so a FetchContent-populate
-# consumer that skips this CMake can -DTRACEBACK_HOOKS itself).
-option(TRACEBACK_HOOKS "Build the whole-process crash dumper: thread registry + SIGUSR2 handler + all-thread dump + __cxa_throw/malloc interposition (heavy; off by default)" OFF)
+# XAPIAND_TRACEBACKS gate. Standalone, the library owns the options itself, the
+# way the times/allocators siblings own their feature macros.
+#
+# TRACEBACK_HOOKS (default OFF) gates the crash dumper: the fixed multi-megabyte
+# lock-free thread registry, the SIGUSR2 stack-walk handler, and the all-thread
+# dump_callstacks()/snapshot(). It does NOT touch the process allocator, so
+# describe()/format() stay safe.
+#
+# TRACEBACK_THROW_HOOKS (default OFF) gates the throw-site tracker: the
+# __cxa_throw + malloc/calloc/realloc/free interposition that records throw-site
+# callstacks. It is split out from the dumper because that allocator override is
+# a landmine (it fights tcmalloc/jemalloc and sanitizers and routes every free —
+# foreign buffers included — through itself), so a host can take the dumper
+# without it. The two compose; each is independent.
+#
+# The default build (both OFF) is just the lightweight formatting box, carrying
+# no static registry, no signal handler, and no allocator override. The options
+# are #cmakedefine'd into a generated traceback_config.h that traceback.h
+# includes (guarded by __has_include, so a FetchContent-populate consumer that
+# skips this CMake can -D them itself).
+option(TRACEBACK_HOOKS "Build the crash dumper: thread registry + SIGUSR2 handler + all-thread dump (off by default)" OFF)
+option(TRACEBACK_THROW_HOOKS "Build the throw-site tracker: __cxa_throw + malloc/free interposition (allocator landmine; off by default)" OFF)
 
 # Registry sizing (only relevant under TRACEBACK_HOOKS). TRACEBACK_MAX_THREADS is
 # the fixed registry array's size; TRACEBACK_MAX_FRAMES is each slot's per-thread

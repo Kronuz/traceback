@@ -46,14 +46,26 @@
 
 #pragma once
 
-// The library owns its build options. TRACEBACK_HOOKS gates the whole heavy
-// crash dumper: the fixed, multi-megabyte, lock-free thread registry, the
-// SIGUSR2 stack-walk handler, the all-thread dump_callstacks()/snapshot(), and
-// the __cxa_throw + malloc/free interposition that records throw-site
-// callstacks. The DEFAULT build (hooks off) is just the lightweight formatting
-// box (capture/describe/format/enable_atos) plus backtrace()/traceback(); no
-// static array, no signal handler, no allocator override is compiled in. A
-// consumer that wants the dumper builds with -DTRACEBACK_HOOKS=ON.
+// The library owns its build options, split into two independent opt-ins:
+//
+//   * TRACEBACK_HOOKS gates the crash dumper: the fixed, multi-megabyte,
+//     lock-free thread registry, the SIGUSR2 stack-walk handler, and the
+//     all-thread dump_callstacks()/snapshot(). No allocator override here, so the
+//     process allocator is untouched and describe()/format() stay safe.
+//
+//   * TRACEBACK_THROW_HOOKS gates the throw-site tracker: a __cxa_throw +
+//     malloc/calloc/realloc/free interposition that stashes the throw-site
+//     callstack on every thrown exception (read back via exception_callstack()).
+//     This is an allocator-interposition landmine — it fights tcmalloc/jemalloc
+//     and sanitizers and routes every free (including foreign buffers like
+//     abi::__cxa_demangle's result) through the override — so it is deliberately
+//     separate: a host can take the dumper without paying for it.
+//
+// Both default OFF. The DEFAULT build is just the lightweight formatting box
+// (capture/describe/format/enable_atos) plus backtrace()/traceback(); no static
+// array, no signal handler, no allocator override is compiled in. They compose:
+// -DTRACEBACK_HOOKS=ON for the dumper, add -DTRACEBACK_THROW_HOOKS=ON for
+// throw-site stacks on top.
 //
 // TRACEBACK_MAX_THREADS (default 1024) sizes the registry array, and
 // TRACEBACK_MAX_FRAMES (default 128) sizes each slot's per-thread callstack;
@@ -197,8 +209,8 @@ void callstacks_snapshot();
 
 // Recover the throw-site callstack stashed for an in-flight exception by the
 // __cxa_throw hook. Only meaningful when the library was built with
-// TRACEBACK_HOOKS; otherwise the returned block is unspecified. The returned
-// `void**` is owned by the exception object, do not free it.
+// TRACEBACK_THROW_HOOKS; otherwise the returned block is unspecified. The
+// returned `void**` is owned by the exception object, do not free it.
 void** exception_callstack(std::exception_ptr& eptr);
 
 // Format a raw `void**` callstack (as produced by backtrace()) into a multi-line
@@ -217,7 +229,7 @@ std::string traceback(const char* function, const char* filename, int line, int 
 // hooks are compiled in, else nullptr (so callers can pass it unconditionally).
 #define TRACEBACK() ::traceback::traceback(__func__, __FILE__, __LINE__)
 
-#ifdef TRACEBACK_HOOKS
+#ifdef TRACEBACK_THROW_HOOKS
 #define BACKTRACE() ::traceback::backtrace()
 #else
 #define BACKTRACE() nullptr

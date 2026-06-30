@@ -48,10 +48,10 @@ namespace traceback {
     void**      backtrace();                         // raw void** callstack (caller frees)
     std::string traceback(const char* fn, const char* file, int line, void** cs, int skip = 1);
     std::string traceback(const char* fn, const char* file, int line, int skip = 1);
-    void**      exception_callstack(std::exception_ptr&);   // throw-site stack (needs TRACEBACK_HOOKS)
+    void**      exception_callstack(std::exception_ptr&);   // throw-site stack (needs TRACEBACK_THROW_HOOKS)
 }
 // TRACEBACK() formats the current stack with a call-site header;
-// BACKTRACE() yields a raw void** only when TRACEBACK_HOOKS is on, else nullptr.
+// BACKTRACE() yields a raw void** only when TRACEBACK_THROW_HOOKS is on, else nullptr.
 ```
 
 The whole-process crash dumper (only compiled with `TRACEBACK_HOOKS`, see below):
@@ -102,27 +102,35 @@ freed slots are reused by later registrations, so a long-running process with
 thread churn does not leak slots up to the cap. `dump_callstacks()` tells idle
 threads (unchanged since the snapshot) from active ones and colorizes the report.
 
-### The dumper and throw-site capture (`TRACEBACK_HOOKS`, opt-in)
+### Two opt-ins: the dumper and the throw-site tracker
 
-`TRACEBACK_HOOKS` gates the *whole* crash dumper, not just the throw-site hooks:
-the fixed multi-megabyte thread registry, the SIGUSR2 stack-walk handler, the
-all-thread `dump_callstacks()`/`callstacks_snapshot()`, **and** the `__cxa_throw`
-+ global `malloc`/`free` interposition that lets `exception_callstack()` recover
-the stack from where an exception was *thrown*. The default build carries none of
-it: it is just the formatting box plus `backtrace()`/`traceback()`, so a consumer
-that only wants readable tracebacks pays nothing for the registry.
+The heavy parts live behind two independent CMake options, both off by default:
 
-Turn the dumper on with the CMake option `-DTRACEBACK_HOOKS=ON` (or
-`-DTRACEBACK_HOOKS` on the compile line for a FetchContent-populate consumer).
-Tune the registry footprint with `-DTRACEBACK_MAX_THREADS` / `-DTRACEBACK_MAX_FRAMES`.
+- **`TRACEBACK_HOOKS`** — the crash dumper: the fixed multi-megabyte thread
+  registry, the SIGUSR2 stack-walk handler, and the all-thread
+  `dump_callstacks()`/`callstacks_snapshot()`. It does **not** touch the process
+  allocator, so `describe()`/`format()` stay safe.
 
-The allocator interposition is the reason this is opt-in: it is a landmine that
-fights tcmalloc/jemalloc and sanitizers and leans on libc++/libsupc++ ABI
-internals. One sharp edge to know: with the hooks on, symbolizing a C++-mangled
-frame goes through `abi::__cxa_demangle`, whose buffer is then `free`d through the
-override; on some platforms (macOS among them) that allocation does not route
-through the interposed `malloc`, so freeing it can corrupt the heap. Keep the
-hooks off unless you specifically need throw-site stacks.
+- **`TRACEBACK_THROW_HOOKS`** — the throw-site tracker: the `__cxa_throw` +
+  global `malloc`/`calloc`/`realloc`/`free` interposition that lets
+  `exception_callstack()` recover the stack from where an exception was *thrown*.
+
+The default build carries neither: it is just the formatting box plus
+`backtrace()`/`traceback()`, so a consumer that only wants readable tracebacks
+pays nothing for the registry. The two options compose — `-DTRACEBACK_HOOKS=ON`
+for the dumper, add `-DTRACEBACK_THROW_HOOKS=ON` for throw-site stacks on top (or
+the same `-D`s on the compile line for a FetchContent-populate consumer). Tune
+the registry footprint with `-DTRACEBACK_MAX_THREADS` / `-DTRACEBACK_MAX_FRAMES`.
+
+The throw-site tracker is split out from the dumper precisely because the
+allocator interposition is a landmine: it fights tcmalloc/jemalloc and sanitizers
+and leans on libc++/libsupc++ ABI internals. The sharp edge: with it on,
+symbolizing a C++-mangled frame goes through `abi::__cxa_demangle`, whose buffer
+is then `free`d through the override; on some platforms (macOS among them) that
+allocation does not route through the interposed `malloc`, so freeing it can
+corrupt the heap. Taking just `TRACEBACK_HOOKS` (the dumper) leaves the allocator
+untouched and sidesteps that entirely — enable `TRACEBACK_THROW_HOOKS` only when
+you specifically need throw-site stacks.
 
 ## Forward compatibility with `std::stacktrace`
 

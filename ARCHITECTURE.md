@@ -12,25 +12,31 @@ return addresses with `::backtrace`, symbolizes them with `dladdr` +
 lived macOS `atos` child. Nothing here is heavy: no static array, no signal
 handler, no allocator override.
 
-The **whole-process crash dumper** is everything else, and it all lives behind
-the `TRACEBACK_HOOKS` build option: the thread registry, the SIGUSR2 stack-walk
-handler, `dump_callstacks()` / `callstacks_snapshot()`, the
-`register_thread` / `deregister_thread` / `thread_registration` API, and the
-`__cxa_throw` + `malloc`/`free` interposition that records throw-site stacks. A
-consumer that only wants readable tracebacks builds with the hooks off and pays
-nothing for any of it. The matching declarations in `traceback.h` are guarded by
-the same macro, so the symbols do not even exist in a default build.
+The **whole-process crash dumper** is everything else, split across two
+independent build options, both off by default.
 
-`TRACEBACK_HOOKS` is off by default because the allocator interposition is a
-landmine: it fights tcmalloc/jemalloc and sanitizers and leans on
-libc++/libsupc++ ABI internals. It also has a sharp edge that the test works
-around. Symbolizing a C++-mangled frame calls `abi::__cxa_demangle`, whose buffer
-is then `free`d. With the hooks on, that `free` is the interposed one, but on some
+`TRACEBACK_HOOKS` gates the dumper proper: the thread registry, the SIGUSR2
+stack-walk handler, `dump_callstacks()` / `callstacks_snapshot()`, and the
+`register_thread` / `deregister_thread` / `thread_registration` API. It leaves
+the process allocator alone, so a host can take it and keep `describe()` safe.
+
+`TRACEBACK_THROW_HOOKS` gates the throw-site tracker: the `__cxa_throw` +
+`malloc`/`calloc`/`realloc`/`free` interposition that records throw-site stacks
+and backs `exception_callstack()`. The matching declarations in `traceback.h`
+(and the `BACKTRACE()` macro) are guarded per option, so a consumer that only
+wants readable tracebacks builds with both off and pays nothing for any of it.
+
+The throw-site tracker is a *separate* opt-in, not folded into the dumper,
+because the allocator interposition is a landmine: it fights tcmalloc/jemalloc
+and sanitizers and leans on libc++/libsupc++ ABI internals. The sharp edge:
+symbolizing a C++-mangled frame calls `abi::__cxa_demangle`, whose buffer is then
+`free`d. With the throw hooks on, that `free` is the interposed one, but on some
 platforms (macOS among them) the demangle buffer was allocated by a `malloc` that
-bypassed the interposer, so freeing it corrupts the heap. The dumper's own
-formatting runs on the dumping thread, so a host that calls `dump_callstacks()`
-from one place is fine in practice, but it is a real reason to keep the hooks off
-unless you need throw-site stacks.
+bypassed the interposer, so freeing it corrupts the heap. Splitting the options
+means a host that wants per-thread crash dumps (Xapiand does) takes
+`TRACEBACK_HOOKS` alone, leaves the allocator untouched, and never trips the
+landmine — `describe()`'s `free` is the real one. Enable `TRACEBACK_THROW_HOOKS`
+only when you specifically need throw-site stacks.
 
 ## The thread registry
 

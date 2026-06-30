@@ -278,10 +278,13 @@ format(const std::source_location& loc, std::size_t skip, std::size_t max)
 // Ported from Xapiand's traceback.cc. A fixed registry of named threads; a
 // SIGUSR2 handler that walks the interrupted thread's stack in place and stores
 // it into that thread's slot; dump_callstacks()/callstacks_snapshot(), which
-// broadcast the signal and render every thread's stack; an optional __cxa_throw
-// + malloc/free interposition (gated on TRACEBACK_HOOKS) that records throw-site
-// callstacks. Symbol formatting routes through describe() above, not a second
-// copy of the dladdr/atos logic.
+// broadcast the signal and render every thread's stack (all gated on
+// TRACEBACK_HOOKS). A separately-gated __cxa_throw + malloc/free interposition
+// (TRACEBACK_THROW_HOOKS) records throw-site callstacks; it is split off from the
+// dumper because the allocator override is a landmine (it makes every free —
+// including foreign buffers like __cxa_demangle's — go through it), so a host can
+// take the dumper without it. Symbol formatting routes through describe() above,
+// not a second copy of the dladdr/atos logic.
 // ==========================================================================
 
 namespace {
@@ -549,17 +552,21 @@ exception_callstack(std::exception_ptr& eptr)
 }
 
 
-#if defined(TRACEBACK_HOOKS)
+#if defined(TRACEBACK_THROW_HOOKS)
 
-// Global allocator + __cxa_throw interposition. With the hooks on, every thrown
-// exception carries the throw-site callstack: malloc/calloc/realloc/free reserve
-// one pointer's worth of slack ahead of each allocation, and __cxa_throw stashes
-// backtrace() there before forwarding to the real implementation.
+// Global allocator + __cxa_throw interposition. With the throw hooks on, every
+// thrown exception carries the throw-site callstack: malloc/calloc/realloc/free
+// reserve one pointer's worth of slack ahead of each allocation, and __cxa_throw
+// stashes backtrace() there before forwarding to the real implementation.
 //
 // This is an allocator-interposition landmine (it fights tcmalloc/jemalloc and
-// sanitizers and leans on libc++/libsupc++ ABI internals), which is exactly why
-// it is opt-in. Off by default; on, the all-thread snapshot and per-thread
-// formatter still work, this only adds throw-site stacks.
+// sanitizers, leans on libc++/libsupc++ ABI internals, and makes freeing any
+// foreign buffer — e.g. an abi::__cxa_demangle result — go through the override),
+// which is exactly why it is its OWN opt-in, split out from the crash dumper
+// (TRACEBACK_HOOKS). Off by default; turning on just the dumper leaves the
+// process allocator untouched, so describe()/format() stay safe. With the throw
+// hooks on, the all-thread snapshot and per-thread formatter still work, this
+// only adds throw-site stacks (and the allocator caveats above).
 
 extern "C" {
 
@@ -639,7 +646,7 @@ void __cxa_throw(void* thrown_object, __cxa_throw_type_info_t* tinfo, void (*des
 
 }  // extern "C"
 
-#endif  // TRACEBACK_HOOKS
+#endif  // TRACEBACK_THROW_HOOKS
 
 ////////////////////////////////////////////////////////////////////////////////
 

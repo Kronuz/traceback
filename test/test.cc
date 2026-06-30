@@ -107,9 +107,13 @@ int main()
 	// All dumping happens on the MAIN thread, and we snapshot the parked worker
 	// first so dump_callstacks() sees it as idle and does not symbolize it. That
 	// avoids describe() -> __cxa_demangle -> free() on a C++-mangled worker frame:
-	// with TRACEBACK_HOOKS on, the process-wide malloc/free interposition makes
-	// freeing a __cxa_demangle buffer through the override unsafe (the documented
-	// landmine), which is orthogonal to the registry behavior under test here.
+	// only relevant under TRACEBACK_THROW_HOOKS, where the process-wide
+	// malloc/free interposition makes freeing a __cxa_demangle buffer through the
+	// override unsafe (the documented landmine). This dumper-only build
+	// (TRACEBACK_HOOKS without TRACEBACK_THROW_HOOKS) leaves the allocator
+	// untouched, so the snapshot-first dance is belt-and-suspenders here and keeps
+	// the test valid under either build. It is orthogonal to the registry
+	// behavior under test.
 	auto count_total = [](const std::string& d) -> std::size_t {
 		// dump header looks like: <Threads {total:N, active:M}>
 		auto pos = d.find("total:");
