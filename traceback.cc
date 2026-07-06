@@ -929,6 +929,23 @@ callstacks_snapshot()
 void
 register_thread(pthread_t pthread, const char* name)
 {
+	// backtrace()'s first call in the process lazily dlopens libgcc_s (the
+	// unwinder), and that load mallocs -- so backtrace() is not async-signal-safe
+	// until it has happened once. collect_callstack_sig_handler() calls backtrace()
+	// from SIGUSR2 context, so force that one-time load HERE, in normal context: a
+	// thread must register before it can be signalled, so warming on the first
+	// registration guarantees every later in-handler backtrace() is malloc-free.
+	// Without this the first callstacks_snapshot() triggers the load inside the
+	// handler, which ThreadSanitizer (rightly) reports as a signal-unsafe call
+	// inside a signal, aborting the process under halt_on_error.
+#if defined(TRACEBACK_HAVE_EXECINFO)
+	[[maybe_unused]] static const bool warmed_backtrace = [] {
+		void* tmp[1];
+		(void)::backtrace(tmp, 1);
+		return true;
+	}();
+#endif
+
 	// Prefer reclaiming a freed slot (one whose owner deregistered) before
 	// extending the high-water mark, so thread churn does not leak slots. A
 	// freed slot has a zero pthread; claim it with a CAS so two concurrent
