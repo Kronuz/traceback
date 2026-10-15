@@ -1,5 +1,7 @@
 # traceback
 
+[![CI](https://github.com/Kronuz/traceback/actions/workflows/ci.yml/badge.svg)](https://github.com/Kronuz/traceback/actions/workflows/ci.yml)
+
 A small, modern C++ crash-traceback toolkit, extracted and modernized from
 [Xapiand](https://github.com/Kronuz/Xapiand).
 
