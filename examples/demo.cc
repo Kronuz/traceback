@@ -9,6 +9,7 @@
 // stack into a labelled traceback (most recent call first). This demo walks a
 // few nested calls so real frames show up, prints the box, peeks at the raw
 // addresses underneath it, and shows the macOS `atos` file:line opt-in.
+#include <cstdint>
 #include <cstdio>
 #include <string>
 #include <vector>
