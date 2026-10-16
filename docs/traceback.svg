@@ -1,0 +1,34 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="811" height="744" viewBox="0 0 811 744">
+<rect width="811" height="744" rx="10" fill="#1f2329"/>
+<circle cx="20" cy="18" r="6" fill="#ff5f57"/><circle cx="40" cy="18" r="6" fill="#febc2e"/><circle cx="60" cy="18" r="6" fill="#28c840"/>
+<text x="405.5" y="22" fill="#8a919c" font-family="Menlo, Consolas, monospace" font-size="12" text-anchor="middle">traceback_demo</text>
+<g font-family="Menlo, Consolas, DejaVu Sans Mono, monospace" font-size="14" fill="#d8dee9" xml:space="preserve">
+<text x="18.0" y="56" >traceback demo  (atos file:line is off by default)</text>
+<text x="18.0" y="94" font-weight="bold">── format(): the live stack, most recent call first ──</text>
+<text x="18.0" y="132" >== Traceback (most recent call first): traceback/examples/demo.cc:32 at std::string inner():</text>
+<text x="18.0" y="151" >      4 0x0000000106ca4444 inner() + 52</text>
+<text x="18.0" y="170" >      3 0x0000000106ca432b middle() + 27</text>
+<text x="18.0" y="189" >      2 0x0000000106ca422b outer() + 27</text>
+<text x="18.0" y="208" >      1 0x0000000106ca3eb9 main + 89</text>
+<text x="18.0" y="227" >      0 0x00007ff803cd0530 start + 3056</text>
+<text x="18.0" y="246" >  (the header is the inner() call site; the frames below are the live stack)</text>
+<text x="18.0" y="284" font-weight="bold">── format(header): same stack, your own header ──</text>
+<text x="18.0" y="322" >== Traceback (most recent call first): snapshot from main:</text>
+<text x="18.0" y="341" >      1 0x0000000106ca3f2c main + 204</text>
+<text x="18.0" y="360" >      0 0x00007ff803cd0530 start + 3056</text>
+<text x="18.0" y="398" font-weight="bold">── capture() + describe(): one frame at a time ──</text>
+<text x="18.0" y="417" >  capture() returned 2 raw return addresses</text>
+<text x="18.0" y="436" >  0x0000000106ca3f79  main + 281</text>
+<text x="18.0" y="455" >  0x00007ff803cd0530  start + 3056</text>
+<text x="18.0" y="474" >  describe(bogus) -&gt; [unknown symbol]</text>
+<text x="18.0" y="512" font-weight="bold">── enable_atos(): file:line on macOS (opt-in) ──</text>
+<text x="18.0" y="531" >  atos_enabled() -&gt; true</text>
+<text x="18.0" y="569" >== Traceback (most recent call first): traceback/examples/demo.cc:32 at std::string inner():</text>
+<text x="18.0" y="588" >      4 0x0000000106ca4444 inner() (in traceback_demo) + 52</text>
+<text x="18.0" y="607" >      3 0x0000000106ca432b middle() (in traceback_demo) + 27</text>
+<text x="18.0" y="626" >      2 0x0000000106ca422b outer() (in traceback_demo) + 27</text>
+<text x="18.0" y="645" >      1 0x0000000106ca40b1 main (in traceback_demo) + 593</text>
+<text x="18.0" y="664" >      0 0x00007ff803cd0530 start + 3056</text>
+<text x="18.0" y="683" >  (frames that atos resolves now carry file:line; others stay symbol + offset)</text>
+<text x="18.0" y="721" >done.</text>
+</g></svg>
