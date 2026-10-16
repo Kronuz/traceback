@@ -11,6 +11,7 @@ traceback.cc            The one translation unit.
 traceback_config.h.in   CMake template: TRACEBACK_HOOKS, TRACEBACK_THROW_HOOKS, registry sizes.
 likely.h                Vendored, self-contained branch hints.
 test/test.cc            Formatting, describe, capture (CTest: traceback).
+test/hooks_test.cc      The dumper and throw-site hooks (CTest: traceback_hooks).
 examples/demo.cc        A tour (target traceback_demo).
 docs/API.md             The API reference and the opt-ins.
 docs/traceback.svg      The demo's output, rendered for the README.
@@ -37,7 +38,13 @@ test with `TRACEBACK_HOOKS=ON` by hand when touching the dumper.
   in place and writes into the thread's own slot.
 - **The default build does not touch the allocator.** Only
   `TRACEBACK_THROW_HOOKS` interposes `malloc`, `calloc`, `realloc`, `free`, and
-  `__cxa_throw`.
+  `__cxa_throw`. Each block carries a header whose last word holds the stashed
+  callstack; `malloc`, `realloc`, `free`, and `__cxa_throw` must all use that slot.
+- **Throw hooks need global interposition.** On Apple, system libraries keep the
+  system allocator (two-level namespace), so their blocks reach the hooked `free`
+  without a header and crash it; CMake refuses the option there. The test builds a
+  second library (`traceback_hooks`) with both hooks, the throw half only on
+  Linux/FreeBSD without sanitizers.
 - **Thread names are stored by pointer.** Callers pass long-lived strings.
 
 ## Traps

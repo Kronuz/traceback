@@ -21,8 +21,8 @@ reports, crash handlers, and debugging hangs.
   default.
 - **Opt-in crash dumper** (`TRACEBACK_HOOKS`): a lock-free thread registry and a
   SIGUSR2 walker that dump all threads, telling idle from active.
-- **Opt-in throw-site stacks** (`TRACEBACK_THROW_HOOKS`): recover where an
-  exception was thrown.
+- **Opt-in throw-site stacks** (`TRACEBACK_THROW_HOOKS`, Linux and FreeBSD):
+  recover where an exception was thrown.
 - **Ready for `std::stacktrace`**: the API can switch to C++23's implementation
   without changing callers.
 
@@ -74,8 +74,9 @@ int main() {
 
 - ✅ Attaching a stack to error reports and assertion failures.
 - ✅ Finding where every thread is stuck in a hung server (`TRACEBACK_HOOKS`).
-- ❌ Throw-site tracking alongside tcmalloc, jemalloc, or sanitizers:
-  `TRACEBACK_THROW_HOOKS` interposes `malloc` and `free` and conflicts with them.
+- ❌ Throw-site tracking on macOS, or alongside tcmalloc, jemalloc, or sanitizers:
+  `TRACEBACK_THROW_HOOKS` interposes `malloc` and `free`, which needs global symbol
+  interposition and conflicts with other allocators. CMake refuses it on Apple.
 
 ## 📚 Documentation
 

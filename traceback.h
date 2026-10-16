@@ -59,7 +59,9 @@
 //     This is an allocator-interposition landmine — it fights tcmalloc/jemalloc
 //     and sanitizers and routes every free (including foreign buffers like
 //     abi::__cxa_demangle's result) through the override — so it is deliberately
-//     separate: a host can take the dumper without paying for it.
+//     separate: a host can take the dumper without paying for it. It needs global
+//     symbol interposition (Linux, FreeBSD); Apple's two-level namespace leaves
+//     system libraries on the real allocator, so it is refused there.
 //
 // Both default OFF. The DEFAULT build is just the lightweight formatting box
 // (capture/describe/format/enable_atos) plus backtrace()/traceback(); no static

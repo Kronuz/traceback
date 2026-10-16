@@ -89,6 +89,7 @@ The heavy parts live behind two independent CMake options, both off by default:
 - **`TRACEBACK_THROW_HOOKS`** — the throw-site tracker: the `__cxa_throw` +
   global `malloc`/`calloc`/`realloc`/`free` interposition that lets
   `exception_callstack()` recover the stack from where an exception was *thrown*.
+  Linux and FreeBSD only: CMake refuses it on Apple platforms.
 
 The default build carries neither: it is just the formatting box plus
 `backtrace()`/`traceback()`, so a consumer that only wants readable tracebacks

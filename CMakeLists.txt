@@ -42,6 +42,12 @@ endif()
 # skips this CMake can -D them itself).
 option(TRACEBACK_HOOKS "Build the crash dumper: thread registry + SIGUSR2 handler + all-thread dump (off by default)" OFF)
 option(TRACEBACK_THROW_HOOKS "Build the throw-site tracker: __cxa_throw + malloc/free interposition (allocator landmine; off by default)" OFF)
+# The throw hooks replace malloc/free from the executable. On Apple platforms system
+# libraries keep calling the system allocator (two-level namespace), so their blocks
+# reach the hooked free() without its header and crash it; refuse the build there.
+if(TRACEBACK_THROW_HOOKS AND APPLE)
+	message(FATAL_ERROR "TRACEBACK_THROW_HOOKS needs global symbol interposition (Linux, FreeBSD); it is not supported on Apple platforms")
+endif()
 
 # Registry sizing (only relevant under TRACEBACK_HOOKS). TRACEBACK_MAX_THREADS is
 # the fixed registry array's size; TRACEBACK_MAX_FRAMES is each slot's per-thread
@@ -142,6 +148,23 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
 	add_executable(traceback_test test/test.cc)
 	target_link_libraries(traceback_test PRIVATE traceback)
 	add_test(NAME traceback COMMAND traceback_test)
+
+	# The opt-in hooks, compiled into a second copy of the library so the default
+	# build tests them too. The throw hooks interpose malloc/free, which a sanitizer
+	# runtime already owns and Apple's two-level namespace bypasses, so those builds
+	# test the dumper alone.
+	add_library(traceback_hooks STATIC traceback.cc)
+	target_include_directories(traceback_hooks PUBLIC "${CMAKE_CURRENT_SOURCE_DIR}" "${CMAKE_CURRENT_BINARY_DIR}")
+	target_compile_features(traceback_hooks PUBLIC cxx_std_20)
+	target_compile_options(traceback_hooks PRIVATE -fno-omit-frame-pointer)
+	target_link_libraries(traceback_hooks PUBLIC $<TARGET_PROPERTY:traceback,INTERFACE_LINK_LIBRARIES>)
+	target_compile_definitions(traceback_hooks PUBLIC TRACEBACK_HOOKS=1)
+	if(NOT APPLE AND NOT CMAKE_CXX_FLAGS MATCHES "sanitize")
+		target_compile_definitions(traceback_hooks PUBLIC TRACEBACK_THROW_HOOKS=1)
+	endif()
+	add_executable(traceback_hooks_test test/hooks_test.cc)
+	target_link_libraries(traceback_hooks_test PRIVATE traceback_hooks)
+	add_test(NAME traceback_hooks COMMAND traceback_hooks_test)
 
 	# A runnable tour of the library (not a test): build & run ./build/traceback_demo
 	add_executable(traceback_demo examples/demo.cc)

@@ -604,8 +604,8 @@ void* realloc(void* p, std::size_t size) {
 	p = orig_realloc(p, size + alignof(max_align_t));
 	if (p) {
 		std::memset(p, 0, alignof(max_align_t));
-		*static_cast<void**>(p) = pp;
 		p = static_cast<char*>(p) + alignof(max_align_t);
+		*(static_cast<void**>(p) - 1) = pp;  // the slot free() and __cxa_throw use
 	}
 	return p;
 }
