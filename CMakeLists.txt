@@ -72,7 +72,7 @@ configure_file(
 FetchContent_Declare(
 	strings
 	GIT_REPOSITORY https://github.com/Kronuz/strings.git
-	GIT_TAG        b42d3c4ce1130043a381e487ae0a693248c2c0f5
+	GIT_TAG        485f882e7fc09775b7ae84930de14289aa9a4aa5
 )
 FetchContent_Declare(
 	errno_names
