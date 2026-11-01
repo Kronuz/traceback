@@ -14,7 +14,6 @@ test/test.cc            Formatting, describe, capture (CTest: traceback).
 test/hooks_test.cc      The dumper and throw-site hooks (CTest: traceback_hooks).
 examples/demo.cc        A tour (target traceback_demo).
 docs/API.md             The API reference and the opt-ins.
-docs/traceback.svg      The demo's output, rendered for the README.
 ```
 
 ## Build and test
