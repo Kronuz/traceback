@@ -72,22 +72,22 @@ configure_file(
 FetchContent_Declare(
 	strings
 	GIT_REPOSITORY https://github.com/Kronuz/strings.git
-	GIT_TAG        485f882e7fc09775b7ae84930de14289aa9a4aa5
+	GIT_TAG        09d4d1bfbd7dd475cc4c532338fd19beca19dcbe
 )
 FetchContent_Declare(
 	errno_names
 	GIT_REPOSITORY https://github.com/Kronuz/errno-names.git
-	GIT_TAG        73b74938b3a455423cdf4c0039372dc1fe3b71c7
+	GIT_TAG        0ec0801ff7b4d32412d33b2c7e041c6b55f38d14
 )
 FetchContent_Declare(
 	term_color
 	GIT_REPOSITORY https://github.com/Kronuz/term-color.git
-	GIT_TAG        534e30905b1a40ae1f18dbde46b039dd4333747b
+	GIT_TAG        e4533011479d8e2671a13c42eacd23d738d8228b
 )
 FetchContent_Declare(
 	nanosleep
 	GIT_REPOSITORY https://github.com/Kronuz/nanosleep.git
-	GIT_TAG        256aaf62e70c37239798779fa6b305a9c0491803
+	GIT_TAG        4f6260526fa05aa0300e30eeaef26f0e3d290d18
 )
 FetchContent_MakeAvailable(strings errno_names term_color nanosleep)
 
