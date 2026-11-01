@@ -25,8 +25,40 @@ cmake -B build-hooks -DTRACEBACK_HOOKS=ON && cmake --build build-hooks && ctest 
 
 `TRACEBACK_HOOKS` builds the crash dumper; `TRACEBACK_THROW_HOOKS` adds the
 throw-site tracker; `TRACEBACK_MAX_THREADS` (1024) and `TRACEBACK_MAX_FRAMES`
-(128) size the registry. CI builds only the default configuration, so build and
-test with `TRACEBACK_HOOKS=ON` by hand when touching the dumper.
+(128) size the registry. The default configuration, the one CI builds, also
+compiles a second copy of the library with the hooks for `traceback_hooks`; the
+`TRACEBACK_HOOKS=ON` build runs `traceback` itself against the dumper build.
+
+## Verification and benchmarks
+
+The method shared by the Kronuz libraries is in
+[docs/PERFORMANCE.md](https://github.com/Kronuz/cpp-libraries/blob/main/docs/PERFORMANCE.md).
+
+- **Tests.** The commands above run `traceback` (`test/test.cc`) and `traceback_hooks`
+  (`test/hooks_test.cc`: the dumper over a registered worker thread and, on Linux and FreeBSD
+  without a sanitizer, the throw-site tracker). A symbolized stack has no exact oracle, so the
+  tests check its shape: frames captured, the header, the `test.cc` source location, the dump's
+  thread list, and that a registry slot freed by one thread is reused by the next.
+- **Sanitizers.** CI (`.github/workflows/ci.yml`, which calls the shared
+  [cmake.yml](https://github.com/Kronuz/cpp-libraries/blob/main/.github/workflows/cmake.yml))
+  runs both in an ASan+UBSan build and a TSan build (the registry and the SIGUSR2 walk are
+  concurrent), with clang on Linux. In a build whose flags name a sanitizer, CMake compiles
+  `traceback_hooks` without the throw hooks, since they replace `malloc` and `free`. The two
+  jobs are:
+
+  ```sh
+  CC=clang CXX=clang++ cmake -B build-asan -DCMAKE_BUILD_TYPE=Debug \
+    -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -D_GLIBCXX_ASSERTIONS" \
+    -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+  cmake --build build-asan && ASAN_OPTIONS=detect_leaks=1 ctest --test-dir build-asan --output-on-failure
+  CC=clang CXX=clang++ cmake -B build-tsan -DCMAKE_BUILD_TYPE=RelWithDebInfo \
+    -DCMAKE_CXX_FLAGS_RELWITHDEBINFO="-O1 -g -fsanitize=thread -fno-omit-frame-pointer" \
+    -DCMAKE_EXE_LINKER_FLAGS=-fsanitize=thread
+  cmake --build build-tsan && TSAN_OPTIONS="halt_on_error=1 second_deadlock_stack=1" ctest --test-dir build-tsan --output-on-failure
+  ```
+
+- **Not here.** The repository has no benchmark target, differential test, fuzz target or
+  mutation script.
 
 ## Invariants
 
