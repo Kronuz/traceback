@@ -33,6 +33,8 @@
 #include <exception>         // for std::exception_ptr
 #include <format>            // for std::format
 #include <sched.h>           // for sched_yield
+#include <sys/mman.h>        // for mincore
+#include <unistd.h>          // for sysconf
 #include <unwind.h>          // for _Unwind_Exception (throw-site hook)
 #if defined(__FreeBSD__)
 #include <ucontext.h>        // for ucontext_t
@@ -659,6 +661,32 @@ void __cxa_throw(void* thrown_object, __cxa_throw_type_info_t* tinfo, void (*des
 // build (hooks off) does not compile any of this; see traceback.h, where the
 // matching declarations are guarded too.
 
+namespace {
+
+// Whether the two words at `p` can be read. The interrupted code may keep anything in its frame register
+// (a function built without frame pointers), so the handler reads `p` only when it is aligned and mapped.
+// mincore() reports an unmapped range with an error instead of a fault, and is async-signal-safe.
+bool
+frame_is_mapped(const void* p) noexcept
+{
+	const auto addr = reinterpret_cast<std::uintptr_t>(p);
+	constexpr std::size_t size = 2 * sizeof(void*);
+	if (addr % alignof(void*) != 0 || addr > UINTPTR_MAX - size) {
+		return false;
+	}
+	const auto page = static_cast<std::uintptr_t>(sysconf(_SC_PAGESIZE));
+	const auto first = addr & ~(page - 1);
+	const auto last = (addr + size - 1) & ~(page - 1);
+#if defined(__linux__)
+	unsigned char vec[2];
+#else
+	char vec[2];
+#endif
+	return mincore(reinterpret_cast<void*>(first), last - first + page, vec) == 0;
+}
+
+}  // namespace
+
 void
 collect_callstack_sig_handler(int /*signum*/, siginfo_t* /*info*/, void* ptr)
 {
@@ -709,7 +737,7 @@ collect_callstack_sig_handler(int /*signum*/, siginfo_t* /*info*/, void* ptr)
 	#define BELOW <
 #endif
 	void* stack = &stack;
-	auto return_address = frame && !(frame BELOW stack) ? frame->return_address : nullptr;
+	auto return_address = frame && !(frame BELOW stack) && frame_is_mapped(frame) ? frame->return_address : nullptr;
 #undef BELOW
 
 	auto pthread = pthread_self();
