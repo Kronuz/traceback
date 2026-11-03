@@ -11,7 +11,11 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#if defined(__FreeBSD__)
 #include <ucontext.h>
+#else
+#include <sys/ucontext.h>     // <ucontext.h> needs _XOPEN_SOURCE on macOS
+#endif
 
 // Not CHECK(): the checks have side effects (pthread_create, sigaction), and a Release build drops assert.
 #define CHECK(cond) do { if (!(cond)) { std::fprintf(stderr, "CHECK failed at line %d: %s\n", __LINE__, #cond); std::abort(); } } while (0)
