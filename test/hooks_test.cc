@@ -11,10 +11,8 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
-#if defined(__FreeBSD__)
-#include <ucontext.h>
-#else
-#include <sys/ucontext.h>     // <ucontext.h> needs _XOPEN_SOURCE on macOS
+#if defined(__linux__)
+#include <ucontext.h>          // for getcontext; the junk-frame test is Linux-only
 #endif
 
 // Not CHECK(): the checks have side effects (pthread_create, sigaction), and a Release build drops assert.
