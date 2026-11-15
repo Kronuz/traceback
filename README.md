@@ -91,6 +91,8 @@ Not for:
 
 ## 📚 Documentation
 
+- [The Haunted Handler](https://kronuz.github.io/blog/the-haunted-handler/):
+  the Familiars post on why it exists and how it works.
 - [docs/API.md](docs/API.md): the formatting API, the raw layer, the crash dumper and its
   host glue, the two opt-ins and `atos`.
 - [ARCHITECTURE.md](ARCHITECTURE.md): capture, symbolization, the registry and the
