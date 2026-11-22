@@ -6,6 +6,15 @@ entries are dated.
 
 Upgrading a pin from before 2026-10-30: [the consumer upgrade note](https://github.com/Kronuz/cpp-libraries/blob/main/docs/UPGRADING-2026-10.md#traceback) lists what changes for callers, how to find affected inputs, the commits not to pin, and the speedup.
 
+## 2026-11-21
+
+### Fixed
+
+- `dump_callstacks()` no longer reads frames it never recorded when it decides whether a thread
+  is idle. A stack shorter than the compared frame (the main thread on FreeBSD, which sits right
+  on `__libc_start1`) read two uninitialized slots, which could match and hide the dumping thread
+  from the dump. Such a stack now prints as active.
+
 ## 2026-11-01
 
 ### Changed

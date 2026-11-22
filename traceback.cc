@@ -839,15 +839,19 @@ dump_callstacks()
 			}
 			callstack[0] = &callstack[callstack_frames];
 
+			// Idle means the frame below the dump (or snapshot) machinery is the same in both. A stack too
+			// short to hold that frame cannot be compared, so it prints.
+			bool comparable = callstack_frames > skip_call && snapshot_frames > skip_snap;
+
 			if (!snapshot_frames || !callstack_frames) {
 				++active;
 				ret.append(strings::format("        " + STEEL_BLUE + "<Thread {}: {}{}{}>\n", idx, name, !snapshot_frames ? " " + DARK_STEEL_BLUE + "(no snapshot)" + STEEL_BLUE : " " + DARK_STEEL_BLUE + "(no callstack)" + STEEL_BLUE, errnum ? " " + RED + "(" + error::name(errnum) + ")" + STEEL_BLUE : ""));
 				if (callstack_frames) {
 					ret.append(strings::format(DEBUG_COL + "{}\n", strings::indent(traceback(name, "", static_cast<int>(idx), callstack, static_cast<int>(skip_call)), ' ', 8, true)));
 				}
-			} else if (callstack[1 + skip_call] != snapshot[1 + skip_snap]) {
+			} else if (!comparable || callstack[1 + skip_call] != snapshot[1 + skip_snap]) {
 				++active;
-				ret.append(strings::format("        " + STEEL_BLUE + "<Thread {}: {}{}{}>\n", idx, name, callstack[1 + skip_call] == snapshot[1 + skip_snap] ? " " + DARK_STEEL_BLUE + "(idle)" + STEEL_BLUE : " " + DARK_ORANGE + "(active)" + STEEL_BLUE, errnum ? " " + RED + "(" + error::name(errnum) + ")" + STEEL_BLUE : ""));
+				ret.append(strings::format("        " + STEEL_BLUE + "<Thread {}: {}{}{}>\n", idx, name, " " + DARK_ORANGE + "(active)" + STEEL_BLUE, errnum ? " " + RED + "(" + error::name(errnum) + ")" + STEEL_BLUE : ""));
 				ret.append(strings::format(DEBUG_COL + "{}\n", strings::indent(traceback(name, "", static_cast<int>(idx), callstack, static_cast<int>(skip_call)), ' ', 8, true)));
 			}
 		}
