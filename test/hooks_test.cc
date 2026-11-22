@@ -6,6 +6,7 @@
 #include <cstdlib>
 #include <csignal>
 #include <cstdio>
+#include <cstring>
 #include <exception>
 #include <pthread.h>
 #include <stdexcept>
@@ -30,6 +31,14 @@ static void* worker(void*) {
 	return nullptr;
 }
 
+// Fills the stack below the caller with one byte, so a read of a frame the dump never recorded sees the
+// same value in the callstack and the snapshot, whatever the platform left there.
+[[gnu::noinline]] static void poison_stack() {
+	unsigned char junk[16384];
+	std::memset(junk, 0x5a, sizeof(junk));
+	asm volatile("" : : "r"(junk) : "memory");
+}
+
 static void test_dumper() {
 	struct sigaction sa{};
 	sa.sa_flags = SA_SIGINFO | SA_RESTART;
@@ -43,9 +52,15 @@ static void test_dumper() {
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
 	}
 	traceback::callstacks_snapshot();
+	// The main thread's stack is shorter than the frame the dump compares on FreeBSD (main sits right on
+	// __libc_start1); the poison makes that hold the same way here.
+	poison_stack();
 	std::string dump = traceback::dump_callstacks();
 	// Both threads are registered; the sleeping worker is idle since the snapshot, so
 	// only the main thread (which is dumping) prints a traceback.
+	if (dump.find("hooks-main") == std::string::npos) {
+		std::fprintf(stderr, "%s", dump.c_str());
+	}
 	CHECK(dump.find("total:2") != std::string::npos);
 	CHECK(dump.find("hooks-main") != std::string::npos);
 	CHECK(dump.find("Traceback") != std::string::npos);
